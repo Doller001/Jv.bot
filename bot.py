@@ -1,18 +1,22 @@
 import logging
 import requests
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from bytez import Bytez
 import db
 from config import BOT_TOKEN, BYTEZ_KEY, ADMINS
 
-# ---------- INIT ----------
-logging.basicConfig(level=logging.INFO)
+# ---------- LOGGING ----------
+logging.basicConfig(
+    format="%(levelname)s:%(name)s:%(message)s",
+    level=logging.WARNING
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
+# ---------- INIT ----------
 db.init()
 
 sdk = Bytez(BYTEZ_KEY)
@@ -25,7 +29,7 @@ def is_admin(uid: int) -> bool:
     return uid in ADMINS
 
 def generate_image(prompt: str):
-    # CHANGE URL to your docker API endpoint
+    # ⚠️ Put your docker API URL here
     url = "http://127.0.0.1:5000/generate"
     r = requests.post(url, json={"prompt": prompt}, timeout=180)
     if r.status_code != 200:
@@ -34,13 +38,16 @@ def generate_image(prompt: str):
     return data.get("image_url") or data.get("path")
 
 def short_answer(prompt: str) -> str:
-    results = chat_model.run([
-        {"role": "system", "content": "Reply very short. Only key points. No extra talk."},
-        {"role": "user", "content": prompt},
-    ])
-    if results.error:
-        return "AI error."
-    return str(results.output)[:3500]
+    try:
+        results = chat_model.run([
+            {"role": "system", "content": "Reply very short. Only key points. No extra talk."},
+            {"role": "user", "content": prompt},
+        ])
+        if results.error:
+            return "AI error."
+        return str(results.output)[:3500]
+    except:
+        return "AI service busy."
 
 # ---------- COMMANDS ----------
 
@@ -151,16 +158,17 @@ async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     prompt = " ".join(context.args)
-    await update.message.reply_text("🎬 Generating video... (slow)")
+    await update.message.reply_text("🎬 Generating video...")
 
-    results = video_model.run(prompt)
-
-    if results.error:
-        await update.message.reply_text("Video generation failed.")
+    try:
+        results = video_model.run(prompt)
+        if results.error:
+            raise Exception("Video API error")
+    except:
+        await update.message.reply_text("Video service busy.")
         return
 
     db.increase(user_id, "video")
-
     await update.message.reply_text(f"Result:\n{results.output}")
 
 # ---------- ADMIN ----------
@@ -231,6 +239,8 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- MAIN ----------
 
 def main():
+    print("Jarvis running...")
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -244,7 +254,6 @@ def main():
     app.add_handler(CommandHandler("setlimit", setlimit))
     app.add_handler(CommandHandler("broadcast", broadcast))
 
-    print("Jarvis running...")
     app.run_polling()
 
 if __name__ == "__main__":
